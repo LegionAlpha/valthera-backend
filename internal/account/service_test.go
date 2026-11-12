@@ -22,6 +22,20 @@ func (f creatorFunc) Create(
 	return f(ctx, params)
 }
 
+func (r unexpectedReader) GetByID(
+	context.Context,
+	uuid.UUID,
+	uuid.UUID,
+) (account.Account, error) {
+	r.t.Helper()
+	r.t.Fatal("reader must not be called during account creation")
+	return account.Account{}, nil
+}
+
+type unexpectedReader struct {
+	t *testing.T
+}
+
 func TestServiceCreate(t *testing.T) {
 	userID := uuid.MustParse(
 		"d7386164-7cc2-4aa3-a51c-338da77e57a6",
@@ -67,8 +81,10 @@ func TestServiceCreate(t *testing.T) {
 		return want, nil
 	})
 
-	service := account.NewService(creator)
-
+	service := account.NewService(
+		creator,
+		unexpectedReader{t: t},
+	)
 	got, err := service.Create(ctx, userID, account.CreateInput{
 		Name:                "  Сче\u0308т  ",
 		InitialBalanceMinor: -125050,
@@ -119,7 +135,10 @@ func TestServiceCreateRejectsInvalidInput(t *testing.T) {
 				return account.Account{}, nil
 			})
 
-			service := account.NewService(creator)
+			service := account.NewService(
+				creator,
+				unexpectedReader{t: t},
+			)
 
 			got, err := service.Create(
 				context.Background(),
@@ -148,7 +167,10 @@ func TestServiceCreateStorageError(t *testing.T) {
 		return account.Account{}, storageErr
 	})
 
-	service := account.NewService(creator)
+	service := account.NewService(
+		creator,
+		unexpectedReader{t: t},
+	)
 
 	got, err := service.Create(
 		context.Background(),

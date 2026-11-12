@@ -22,13 +22,23 @@ type Creator interface {
 	Create(ctx context.Context, params CreateParams) (Account, error)
 }
 
-type Service struct {
-	creator Creator
+type Reader interface {
+	GetByID(
+		ctx context.Context,
+		userID uuid.UUID,
+		accountID uuid.UUID,
+	) (Account, error)
 }
 
-func NewService(creator Creator) *Service {
+type Service struct {
+	creator Creator
+	reader  Reader
+}
+
+func NewService(creator Creator, reader Reader) *Service {
 	return &Service{
 		creator: creator,
+		reader:  reader,
 	}
 }
 
@@ -59,4 +69,25 @@ func (s *Service) Create(
 	}
 
 	return created, nil
+}
+
+func (s *Service) GetByID(
+	ctx context.Context,
+	userID uuid.UUID,
+	accountID uuid.UUID,
+) (Account, error) {
+	if userID == uuid.Nil {
+		return Account{}, ErrInvalidUserID
+	}
+
+	if accountID == uuid.Nil {
+		return Account{}, ErrInvalidAccountID
+	}
+
+	found, err := s.reader.GetByID(ctx, userID, accountID)
+	if err != nil {
+		return Account{}, fmt.Errorf("get account: %w", err)
+	}
+
+	return found, nil
 }

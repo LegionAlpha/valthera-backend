@@ -98,7 +98,10 @@ func run() error {
 	cancel()
 
 	accountRepository := postgres.NewAccountRepository(pool)
-	accountService := account.NewService(accountRepository)
+	accountService := account.NewService(
+		accountRepository,
+		accountRepository,
+	)
 
 	handler := httpapi.NewHandler(
 		accountService,

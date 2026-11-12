@@ -22,6 +22,10 @@ func NewHandler(
 
 	mux.HandleFunc("GET /health", health)
 	mux.HandleFunc("POST /api/v1/accounts", accountHandler.create)
+	mux.HandleFunc(
+		"GET /api/v1/accounts/{id}",
+		accountHandler.getByID,
+	)
 
 	return mux
 }

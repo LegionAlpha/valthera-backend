@@ -187,21 +187,100 @@ func (h *accountHandler) create(
 		}
 		return
 	}
+
+	writeAccount(w, http.StatusCreated, created)
+}
+
+func writeAccount(
+	w http.ResponseWriter,
+	status int,
+	value account.Account,
+) {
+	var archivedAt *time.Time
+	if value.ArchivedAt != nil {
+		utc := value.ArchivedAt.UTC()
+		archivedAt = &utc
+	}
+
 	response := accountResponse{
-		ID:                  created.ID.String(),
-		Name:                created.Name,
-		InitialBalanceMinor: created.InitialBalanceMinor,
-		ArchivedAt:          created.ArchivedAt,
-		CreatedAt:           created.CreatedAt.UTC(),
-		UpdatedAt:           created.UpdatedAt.UTC(),
+		ID:                  value.ID.String(),
+		Name:                value.Name,
+		InitialBalanceMinor: value.InitialBalanceMinor,
+		ArchivedAt:          archivedAt,
+		CreatedAt:           value.CreatedAt.UTC(),
+		UpdatedAt:           value.UpdatedAt.UTC(),
 	}
 
 	etag := fmt.Sprintf(
 		`"account-v1-%s-%d"`,
-		created.ID.String(),
-		created.Version,
+		value.ID.String(),
+		value.Version,
 	)
 	w.Header().Set("ETag", etag)
 
-	writeJSON(w, http.StatusCreated, response)
+	writeJSON(w, status, response)
+}
+
+func (h *accountHandler) getByID(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if h.devUserID == uuid.Nil {
+		writeError(
+			w,
+			http.StatusUnauthorized,
+			"unauthorized",
+			"Authentication required",
+		)
+		return
+	}
+
+	accountID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil || accountID == uuid.Nil {
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"validation_failed",
+			"Invalid account ID",
+		)
+		return
+	}
+
+	found, err := h.service.GetByID(
+		r.Context(),
+		h.devUserID,
+		accountID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, account.ErrNotFound):
+			writeError(
+				w,
+				http.StatusNotFound,
+				"not_found",
+				"Account not found",
+			)
+
+		case errors.Is(err, account.ErrInvalidAccountID):
+			writeError(
+				w,
+				http.StatusBadRequest,
+				"validation_failed",
+				"Invalid account ID",
+			)
+
+		default:
+			log.Printf("get account failed: %v", err)
+
+			writeError(
+				w,
+				http.StatusInternalServerError,
+				"internal",
+				"Internal server error",
+			)
+		}
+		return
+	}
+
+	writeAccount(w, http.StatusOK, found)
 }
