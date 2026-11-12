@@ -16,5 +16,17 @@ services:
       retries: 15
       start_period: 10s
 
+  api:
+    build: .
+    environment:
+      HTTP_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://valthera:${POSTGRES_PASSWORD}@postgres:5432/valthera?sslmode=disable
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:

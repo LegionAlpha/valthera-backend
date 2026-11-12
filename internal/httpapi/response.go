@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 )
@@ -13,6 +14,13 @@ type errorResponse struct {
 type errorDetails struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+type errorMapping struct {
+	err     error
+	status  int
+	code    string
+	message string
 }
 
 func writeError(
@@ -49,4 +57,15 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	if _, err := w.Write(data); err != nil {
 		log.Printf("write response: %v", err)
 	}
+}
+
+func writeMappedError(w http.ResponseWriter, mappings []errorMapping, operation string, err error) {
+	for _, m := range mappings {
+		if errors.Is(err, m.err) {
+			writeError(w, m.status, m.code, m.message)
+			return
+		}
+	}
+	log.Printf("%s failed: %v", operation, err)
+	writeError(w, http.StatusInternalServerError, "internal", "Internal server error")
 }

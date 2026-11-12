@@ -149,42 +149,15 @@ func (h *accountHandler) create(
 			InitialBalanceMinor: *request.InitialBalanceMinor,
 		},
 	)
+	var accountErrors = []errorMapping{
+		{err: account.ErrInvalidName, status: http.StatusBadRequest, code: "validation_failed", message: "Invalid account name"},
+		{err: account.ErrInvalidAccountID, status: http.StatusBadRequest, code: "validation_failed", message: "Invalid account ID"},
+		{err: account.ErrInitialBalanceOutOfRange, status: http.StatusBadRequest, code: "amount_out_of_range", message: "Initial balance is out of range"},
+		{err: account.ErrAggregateOutOfRange, status: http.StatusConflict, code: "aggregate_out_of_range", message: "Total balance would exceed the allowed range"},
+		{err: account.ErrNotFound, status: http.StatusNotFound, code: "not_found", message: "Account not found"},
+	}
 	if err != nil {
-		switch {
-		case errors.Is(err, account.ErrInvalidName):
-			writeError(
-				w,
-				http.StatusBadRequest,
-				"validation_failed",
-				"Invalid account name",
-			)
-
-		case errors.Is(err, account.ErrInitialBalanceOutOfRange):
-			writeError(
-				w,
-				http.StatusBadRequest,
-				"amount_out_of_range",
-				"Initial balance is out of range",
-			)
-
-		case errors.Is(err, account.ErrAggregateOutOfRange):
-			writeError(
-				w,
-				http.StatusConflict,
-				"aggregate_out_of_range",
-				"Total balance would exceed the allowed range",
-			)
-
-		default:
-			log.Printf("create account failed: %v", err)
-
-			writeError(
-				w,
-				http.StatusInternalServerError,
-				"internal",
-				"Internal server error",
-			)
-		}
+		writeMappedError(w, accountErrors, "create account", err)
 		return
 	}
 

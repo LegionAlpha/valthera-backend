@@ -13,8 +13,10 @@ import (
 	"github.com/LegionAlpha/valthera-backend/internal/config"
 	"github.com/LegionAlpha/valthera-backend/internal/httpapi"
 	"github.com/LegionAlpha/valthera-backend/internal/postgres"
+	"github.com/LegionAlpha/valthera-backend/internal/transaction"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -24,6 +26,11 @@ func main() {
 }
 
 func run() error {
+	// .env is optional: in Docker the variables come from the environment.
+	if err := godotenv.Load(); err != nil {
+		log.Println("no .env file found, using environment")
+	}
+
 	cfg := config.Load()
 
 	if cfg.DatabaseURL == "" {
@@ -103,8 +110,15 @@ func run() error {
 		accountRepository,
 	)
 
+	transactionRepository := postgres.NewTransactionRepository(pool)
+	transactionService := transaction.NewService(
+		transactionRepository,
+		transactionRepository,
+	)
+
 	handler := httpapi.NewHandler(
 		accountService,
+		transactionService,
 		devUserID,
 		"http://"+cfg.HTTPAddr,
 	)
