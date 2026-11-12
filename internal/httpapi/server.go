@@ -1,11 +1,27 @@
 package httpapi
 
-import "net/http"
+import (
+	"net/http"
 
-func NewHandler() http.Handler {
+	"github.com/LegionAlpha/valthera-backend/internal/account"
+	"github.com/google/uuid"
+)
+
+func NewHandler(
+	accounts *account.Service,
+	devUserID uuid.UUID,
+	allowedOrigin string,
+) http.Handler {
 	mux := http.NewServeMux()
 
+	accountHandler := &accountHandler{
+		service:       accounts,
+		devUserID:     devUserID,
+		allowedOrigin: allowedOrigin,
+	}
+
 	mux.HandleFunc("GET /health", health)
+	mux.HandleFunc("POST /api/v1/accounts", accountHandler.create)
 
 	return mux
 }

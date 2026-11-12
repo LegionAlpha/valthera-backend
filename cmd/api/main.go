@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"github.com/LegionAlpha/valthera-backend/internal/account"
 	"github.com/LegionAlpha/valthera-backend/internal/config"
 	"github.com/LegionAlpha/valthera-backend/internal/httpapi"
+	"github.com/LegionAlpha/valthera-backend/internal/postgres"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -25,6 +28,32 @@ func run() error {
 
 	if cfg.DatabaseURL == "" {
 		return errors.New("DATABASE_URL is required")
+	}
+
+	var devUserID uuid.UUID
+
+	if cfg.DevUserID != "" {
+		parsedID, err := uuid.Parse(cfg.DevUserID)
+		if err != nil {
+			return fmt.Errorf("parse DEV_USER_ID: %w", err)
+		}
+		if parsedID == uuid.Nil {
+			return errors.New("DEV_USER_ID must not be a nil UUID")
+		}
+
+		devUserID = parsedID
+
+		host, _, err := net.SplitHostPort(cfg.HTTPAddr)
+		if err != nil {
+			return fmt.Errorf("parse HTTP_ADDR: %w", err)
+		}
+
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return errors.New(
+				"DEV_USER_ID requires a loopback HTTP_ADDR",
+			)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(
@@ -42,14 +71,50 @@ func run() error {
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("connect to database: %w", err)
 	}
+
+	if devUserID != uuid.Nil {
+		var exists bool
+
+		err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users
+			WHERE id = $1
+		)
+	`, devUserID).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("validate DEV_USER_ID: %w", err)
+		}
+
+		if !exists {
+			return errors.New(
+				"DEV_USER_ID does not reference an existing user",
+			)
+		}
+
+		log.Println("local development identity enabled")
+	}
+
 	cancel()
+
+	accountRepository := postgres.NewAccountRepository(pool)
+	accountService := account.NewService(accountRepository)
+
+	handler := httpapi.NewHandler(
+		accountService,
+		devUserID,
+		"http://"+cfg.HTTPAddr,
+	)
 
 	log.Println("database connected")
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewHandler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	log.Printf("starting server on http://%s", server.Addr)
