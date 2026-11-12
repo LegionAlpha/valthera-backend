@@ -24,6 +24,7 @@ func NewAccountRepository(pool *pgxpool.Pool) *AccountRepository {
 }
 
 var _ account.Creator = (*AccountRepository)(nil)
+var _ account.Reader = (*AccountRepository)(nil)
 
 func (r *AccountRepository) Create(
 	ctx context.Context,
@@ -137,4 +138,49 @@ func (r *AccountRepository) Create(
 	}
 
 	return created, nil
+}
+
+func (r *AccountRepository) GetByID(
+	ctx context.Context,
+	userID uuid.UUID,
+	accountID uuid.UUID,
+) (account.Account, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var found account.Account
+
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			id,
+			user_id,
+			name,
+			initial_balance_minor,
+			version,
+			archived_at,
+			created_at,
+			updated_at
+		FROM accounts
+		WHERE id = $1 AND user_id = $2
+	`, accountID, userID).Scan(
+		&found.ID,
+		&found.UserID,
+		&found.Name,
+		&found.InitialBalanceMinor,
+		&found.Version,
+		&found.ArchivedAt,
+		&found.CreatedAt,
+		&found.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return account.Account{}, account.ErrNotFound
+	}
+	if err != nil {
+		return account.Account{}, fmt.Errorf(
+			"select account: %w",
+			err,
+		)
+	}
+
+	return found, nil
 }
