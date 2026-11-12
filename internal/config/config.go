@@ -5,6 +5,7 @@ import "os"
 type Config struct {
 	HTTPAddr    string
 	DatabaseURL string
+	DevUserID   string
 }
 
 func Load() Config {
@@ -17,5 +18,6 @@ func Load() Config {
 	return Config{
 		HTTPAddr:    addr,
 		DatabaseURL: os.Getenv("DATABASE_URL"),
+		DevUserID:   os.Getenv("DEV_USER_ID"),
 	}
 }
