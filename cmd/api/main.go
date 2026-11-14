@@ -12,6 +12,8 @@ import (
 	"github.com/LegionAlpha/valthera-backend/internal/account"
 	"github.com/LegionAlpha/valthera-backend/internal/config"
 	"github.com/LegionAlpha/valthera-backend/internal/httpapi"
+	"github.com/LegionAlpha/valthera-backend/internal/identity"
+	"github.com/LegionAlpha/valthera-backend/internal/password"
 	"github.com/LegionAlpha/valthera-backend/internal/postgres"
 	"github.com/LegionAlpha/valthera-backend/internal/transaction"
 	"github.com/google/uuid"
@@ -31,7 +33,10 @@ func run() error {
 		log.Println("no .env file found, using environment")
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 
 	if cfg.DatabaseURL == "" {
 		return errors.New("DATABASE_URL is required")
@@ -49,7 +54,9 @@ func run() error {
 		}
 
 		devUserID = parsedID
+	}
 
+	if cfg.DevUserID != "" || cfg.RegistrationEnabled {
 		host, _, err := net.SplitHostPort(cfg.HTTPAddr)
 		if err != nil {
 			return fmt.Errorf("parse HTTP_ADDR: %w", err)
@@ -58,7 +65,7 @@ func run() error {
 		ip := net.ParseIP(host)
 		if ip == nil || !ip.IsLoopback() {
 			return errors.New(
-				"DEV_USER_ID requires a loopback HTTP_ADDR",
+				"development identity and registration require a loopback HTTP_ADDR",
 			)
 		}
 	}
@@ -116,11 +123,24 @@ func run() error {
 		transactionRepository,
 	)
 
+	passwordHasher, err := password.NewArgon2idHasher(2)
+	if err != nil {
+		return fmt.Errorf("create password hasher: %w", err)
+	}
+
+	userRepository := postgres.NewUserRepository(pool)
+	identityService := identity.NewService(
+		userRepository,
+		passwordHasher,
+	)
+
 	handler := httpapi.NewHandler(
 		accountService,
 		transactionService,
+		identityService,
 		devUserID,
 		"http://"+cfg.HTTPAddr,
+		cfg.RegistrationEnabled,
 	)
 
 	log.Println("database connected")
