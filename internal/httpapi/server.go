@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/LegionAlpha/valthera-backend/internal/account"
+	"github.com/LegionAlpha/valthera-backend/internal/idempotency_key"
 	"github.com/LegionAlpha/valthera-backend/internal/identity"
 	"github.com/LegionAlpha/valthera-backend/internal/transaction"
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ func NewHandler(
 	accounts *account.Service,
 	transactions *transaction.Service,
 	auth *identity.Service,
+	idempotencyKey *idempotency_key.Service,
 	devUserID uuid.UUID,
 	allowedOrigin string,
 	registrationEnabled bool,
@@ -26,9 +28,10 @@ func NewHandler(
 	}
 
 	transactionHandler := &transactionHandler{
-		service:       transactions,
-		devUserID:     devUserID,
-		allowedOrigin: allowedOrigin,
+		service:        transactions,
+		devUserID:      devUserID,
+		allowedOrigin:  allowedOrigin,
+		idempotencyKey: idempotencyKey,
 	}
 
 	authHandler := &authHandler{

@@ -29,27 +29,13 @@ type CreateParams struct {
 	Comment              string
 }
 
-type Creator interface {
-	Create(ctx context.Context, params CreateParams) (Transaction, error)
-}
-
-type Reader interface {
-	GetByID(
-		ctx context.Context,
-		userID uuid.UUID,
-		transactionID uuid.UUID,
-	) (Transaction, error)
-}
-
 type Service struct {
-	creator Creator
-	reader  Reader
+	repo TransactionRepo
 }
 
-func NewService(creator Creator, reader Reader) *Service {
+func NewService(repo TransactionRepo) *Service {
 	return &Service{
-		creator: creator,
-		reader:  reader,
+		repo: repo,
 	}
 }
 
@@ -90,7 +76,7 @@ func (s *Service) Create(
 		return Transaction{}, err
 	}
 
-	created, err := s.creator.Create(ctx, CreateParams{
+	created, err := s.repo.Create(ctx, CreateParams{
 		UserID:               userID,
 		Type:                 transactionType,
 		AccountID:            input.AccountID,
@@ -120,7 +106,7 @@ func (s *Service) GetByID(
 		return Transaction{}, ErrInvalidTransactionID
 	}
 
-	found, err := s.reader.GetByID(ctx, userID, transactionID)
+	found, err := s.repo.GetByID(ctx, userID, transactionID)
 	if err != nil {
 		return Transaction{}, fmt.Errorf("get transaction: %w", err)
 	}

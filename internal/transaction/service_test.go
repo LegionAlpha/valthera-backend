@@ -15,24 +15,28 @@ type creatorFunc func(
 	transaction.CreateParams,
 ) (transaction.Transaction, error)
 
-func (f creatorFunc) Create(
+// fakeRepo implements transaction.TransactionRepo for service tests.
+// Create delegates to the provided func; GetByID must never be called
+// during transaction creation.
+type fakeRepo struct {
+	t      *testing.T
+	create creatorFunc
+}
+
+func (r fakeRepo) Create(
 	ctx context.Context,
 	params transaction.CreateParams,
 ) (transaction.Transaction, error) {
-	return f(ctx, params)
+	return r.create(ctx, params)
 }
 
-type unexpectedReader struct {
-	t *testing.T
-}
-
-func (r unexpectedReader) GetByID(
+func (r fakeRepo) GetByID(
 	context.Context,
 	uuid.UUID,
 	uuid.UUID,
 ) (transaction.Transaction, error) {
 	r.t.Helper()
-	r.t.Fatal("reader must not be called during transaction creation")
+	r.t.Fatal("GetByID must not be called during transaction creation")
 	return transaction.Transaction{}, nil
 }
 
@@ -92,10 +96,7 @@ func TestServiceCreate(t *testing.T) {
 		return want, nil
 	})
 
-	service := transaction.NewService(
-		creator,
-		unexpectedReader{t: t},
-	)
+	service := transaction.NewService(fakeRepo{t: t, create: creator})
 	got, err := service.Create(ctx, testUserID, transaction.CreateInput{
 		Type:        "expense",
 		AccountID:   testAccountID,
@@ -180,10 +181,7 @@ func TestServiceCreateRejectsInvalidInput(t *testing.T) {
 				return transaction.Transaction{}, nil
 			})
 
-			service := transaction.NewService(
-				creator,
-				unexpectedReader{t: t},
-			)
+			service := transaction.NewService(fakeRepo{t: t, create: creator})
 
 			got, err := service.Create(
 				context.Background(),
@@ -213,10 +211,7 @@ func TestServiceCreateStorageError(t *testing.T) {
 		return transaction.Transaction{}, storageErr
 	})
 
-	service := transaction.NewService(
-		creator,
-		unexpectedReader{t: t},
-	)
+	service := transaction.NewService(fakeRepo{t: t, create: creator})
 
 	got, err := service.Create(
 		context.Background(),
