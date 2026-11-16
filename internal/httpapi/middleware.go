@@ -15,6 +15,5 @@ func ApplyOriginMiddleware(next http.Handler, allowedOrigin string) http.Handler
 			return
 		}
 		next.ServeHTTP(w, r)
-
 	})
 }

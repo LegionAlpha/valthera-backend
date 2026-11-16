@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/LegionAlpha/valthera-backend/internal/identity"
+	"github.com/LegionAlpha/valthera-backend/internal/user_session"
 )
 
 type registrationService interface {
@@ -19,7 +20,8 @@ type registrationService interface {
 }
 
 type authHandler struct {
-	service             registrationService
+	service             registrationService // TODO: Почему не поинтер?
+	userSessionService  *user_session.UserSessionService
 	registrationEnabled bool
 	registrationLimiter *registrationLimiter
 }
@@ -93,6 +95,10 @@ func (h *authHandler) register(
 			Password: *request.Password,
 		},
 	)
+	session, err := h.userSessionService.GetOrCreate(
+		r.Context(),
+		created.ID,
+	)
 	if err != nil {
 		if errors.Is(err, identity.ErrPasswordHashingBusy) {
 			w.Header().Set("Retry-After", "1")
@@ -144,9 +150,10 @@ func (h *authHandler) register(
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, userResponse{
+	writeJSONWithHeader(w, http.StatusCreated, userResponse{
 		ID:        created.ID.String(),
 		Email:     *created.Email,
 		CreatedAt: created.CreatedAt.UTC(),
-	})
+	}, []*CustomHeader{&CustomHeader{name: "X-auth", value: string(session.TokenHash)}})
+
 }

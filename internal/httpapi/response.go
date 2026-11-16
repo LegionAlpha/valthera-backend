@@ -23,6 +23,11 @@ type errorMapping struct {
 	message string
 }
 
+type CustomHeader struct {
+	name  string
+	value string
+}
+
 func writeError(
 	w http.ResponseWriter,
 	status int,
@@ -56,6 +61,13 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 	if _, err := w.Write(data); err != nil {
 		log.Printf("write response: %v", err)
+	}
+}
+
+func writeJSONWithHeader(w http.ResponseWriter, status int, value any, headers []*CustomHeader) {
+	writeJSON(w, status, value)
+	for _, v := range headers {
+		w.Header().Set(v.name, v.value)
 	}
 }
 
