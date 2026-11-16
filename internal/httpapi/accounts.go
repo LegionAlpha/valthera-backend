@@ -17,9 +17,8 @@ import (
 )
 
 type accountHandler struct {
-	service       *account.Service
-	devUserID     uuid.UUID
-	allowedOrigin string
+	service   *account.Service
+	devUserID uuid.UUID
 }
 
 type createAccountRequest struct {
@@ -40,16 +39,6 @@ func (h *accountHandler) create(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	origins := r.Header.Values("Origin")
-	if len(origins) != 1 || origins[0] != h.allowedOrigin {
-		writeError(
-			w,
-			http.StatusForbidden,
-			"forbidden_origin",
-			"Origin is not allowed",
-		)
-		return
-	}
 
 	if h.devUserID == uuid.Nil {
 		writeError(

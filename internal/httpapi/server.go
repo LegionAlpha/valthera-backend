@@ -22,42 +22,57 @@ func NewHandler(
 	mux := http.NewServeMux()
 
 	accountHandler := &accountHandler{
-		service:       accounts,
-		devUserID:     devUserID,
-		allowedOrigin: allowedOrigin,
+		service:   accounts,
+		devUserID: devUserID,
 	}
 
 	transactionHandler := &transactionHandler{
 		service:        transactions,
 		devUserID:      devUserID,
-		allowedOrigin:  allowedOrigin,
 		idempotencyKey: idempotencyKey,
 	}
 
 	authHandler := &authHandler{
 		service:             auth,
 		registrationEnabled: registrationEnabled,
-		allowedOrigin:       allowedOrigin,
 		registrationLimiter: newRegistrationLimiter(),
 	}
 
 	mux.HandleFunc("GET /health", health)
-	mux.HandleFunc("POST /api/v1/accounts", accountHandler.create)
-	mux.HandleFunc(
+	mux.Handle(
+		"POST /api/v1/accounts",
+		ApplyOriginMiddleware(
+			http.HandlerFunc(accountHandler.create),
+			allowedOrigin,
+		),
+	)
+	mux.Handle(
 		"GET /api/v1/accounts/{id}",
-		accountHandler.getByID,
+		ApplyOriginMiddleware(
+			http.HandlerFunc(accountHandler.getByID),
+			allowedOrigin,
+		),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"POST /api/v1/transactions",
-		transactionHandler.create,
+		ApplyOriginMiddleware(
+			http.HandlerFunc(transactionHandler.create),
+			allowedOrigin,
+		),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"GET /api/v1/transactions/{id}",
-		transactionHandler.getByID,
+		ApplyOriginMiddleware(
+			http.HandlerFunc(transactionHandler.getByID),
+			allowedOrigin,
+		),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"POST /api/v1/auth/register",
-		authHandler.register,
+		ApplyOriginMiddleware(
+			http.HandlerFunc(authHandler.register),
+			allowedOrigin,
+		),
 	)
 
 	return mux
