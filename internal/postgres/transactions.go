@@ -14,17 +14,21 @@ import (
 )
 
 type TransactionRepository struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	txRunner *TxRunnerRepository
 }
 
-func NewTransactionRepository(pool *pgxpool.Pool) *TransactionRepository {
+func NewTransactionRepository(
+	pool *pgxpool.Pool,
+	txRunner *TxRunnerRepository,
+) *TransactionRepository {
 	return &TransactionRepository{
-		pool: pool,
+		pool:     pool,
+		txRunner: txRunner,
 	}
 }
 
-var _ transaction.Creator = (*TransactionRepository)(nil)
-var _ transaction.Reader = (*TransactionRepository)(nil)
+var _ transaction.TransactionRepo = (*TransactionRepository)(nil)
 
 const transactionColumns = `
 	id,
@@ -48,80 +52,59 @@ func (r *TransactionRepository) Create(
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel: pgx.ReadCommitted,
+	var created transaction.Transaction
+
+	err := r.txRunner.Run(ctx, func(ctx context.Context) error {
+		tx, ok := txFromContext(ctx)
+		if !ok {
+			return errors.New("create transaction: no transaction in context")
+		}
+
+		if err := lockActiveAccount(
+			ctx, tx, params.UserID, params.AccountID,
+		); err != nil {
+			return err
+		}
+
+		if params.DestinationAccountID != nil {
+			if err := lockActiveAccount(
+				ctx, tx, params.UserID, *params.DestinationAccountID,
+			); err != nil {
+				return err
+			}
+		}
+
+		var err error
+		created, err = scanTransaction(tx.QueryRow(ctx, `
+			INSERT INTO transactions (
+				user_id,
+				type,
+				account_id,
+				destination_account_id,
+				category_id,
+				amount_minor,
+				date,
+				comment
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			RETURNING`+transactionColumns,
+			params.UserID,
+			string(params.Type),
+			params.AccountID,
+			params.DestinationAccountID,
+			params.CategoryID,
+			params.AmountMinor,
+			params.Date,
+			params.Comment,
+		))
+		if err != nil {
+			return fmt.Errorf("insert transaction: %w", err)
+		}
+
+		return nil
 	})
 	if err != nil {
-		return transaction.Transaction{}, fmt.Errorf(
-			"begin transaction creation: %w",
-			err,
-		)
-	}
-
-	defer func() {
-		rollbackCtx, rollbackCancel := context.WithTimeout(
-			context.Background(),
-			2*time.Second,
-		)
-		defer rollbackCancel()
-
-		_ = tx.Rollback(rollbackCtx)
-	}()
-
-	if err := lockActiveAccount(
-		ctx,
-		tx,
-		params.UserID,
-		params.AccountID,
-	); err != nil {
 		return transaction.Transaction{}, err
-	}
-
-	if params.DestinationAccountID != nil {
-		if err := lockActiveAccount(
-			ctx,
-			tx,
-			params.UserID,
-			*params.DestinationAccountID,
-		); err != nil {
-			return transaction.Transaction{}, err
-		}
-	}
-
-	created, err := scanTransaction(tx.QueryRow(ctx, `
-		INSERT INTO transactions (
-			user_id,
-			type,
-			account_id,
-			destination_account_id,
-			category_id,
-			amount_minor,
-			date,
-			comment
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING`+transactionColumns,
-		params.UserID,
-		string(params.Type),
-		params.AccountID,
-		params.DestinationAccountID,
-		params.CategoryID,
-		params.AmountMinor,
-		params.Date,
-		params.Comment,
-	))
-	if err != nil {
-		return transaction.Transaction{}, fmt.Errorf(
-			"insert transaction: %w",
-			err,
-		)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return transaction.Transaction{}, fmt.Errorf(
-			"commit transaction creation: %w",
-			err,
-		)
 	}
 
 	return created, nil

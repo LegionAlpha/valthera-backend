@@ -1,22 +1,28 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/LegionAlpha/valthera-backend/internal/idempotency_key"
 	"github.com/LegionAlpha/valthera-backend/internal/transaction"
 	"github.com/google/uuid"
 )
 
 const dateLayout = "2006-01-02"
 
+const createTransactionOperation = "POST /api/v1/transactions"
+
 type transactionHandler struct {
-	service       *transaction.Service
-	devUserID     uuid.UUID
-	allowedOrigin string
+	service        *transaction.Service
+	devUserID      uuid.UUID
+	allowedOrigin  string
+	idempotencyKey *idempotency_key.Service
 }
 
 type createTransactionRequest struct {
@@ -42,8 +48,6 @@ type transactionResponse struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
-// transactionValidationMessages maps input errors to the message of a
-// 400 validation_failed response.
 var transactionValidationMessages = []struct {
 	err     error
 	message string
@@ -60,6 +64,58 @@ var transactionValidationMessages = []struct {
 		transaction.ErrUnexpectedDestination,
 		"Only a transfer can have destination_account_id",
 	},
+}
+
+func transactionFingerprint(input transaction.CreateInput) []byte {
+	return idempotency_key.NewFingerprinter().
+		String(input.Type).
+		UUID(input.AccountID).
+		OptionalUUID(input.DestinationAccountID).
+		OptionalUUID(input.CategoryID).
+		Int64(input.AmountMinor).
+		String(input.Date.Format(dateLayout)).
+		String(input.Comment).
+		Sum()
+}
+
+func parseIdempotencyKey(
+	w http.ResponseWriter,
+	r *http.Request,
+) (string, bool) {
+	values := r.Header.Values("Idempotency-Key")
+
+	if len(values) == 0 {
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"idempotency_key_missing",
+			"Idempotency-Key header is required",
+		)
+		return "", false
+	}
+
+	if len(values) != 1 {
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"validation_failed",
+			"Invalid Idempotency-Key header",
+		)
+		return "", false
+	}
+
+	key, err := idempotency_key.ValidateKey(values[0])
+	if err != nil {
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"validation_failed",
+			"Invalid Idempotency-Key header",
+		)
+		return "", false
+	}
+
+	return key, true
 }
 
 func (h *transactionHandler) create(
@@ -87,6 +143,11 @@ func (h *transactionHandler) create(
 		return
 	}
 
+	key, ok := parseIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+
 	var request createTransactionRequest
 	if !decodeJSONBody(w, r, &request) {
 		return
@@ -110,13 +171,34 @@ func (h *transactionHandler) create(
 		return
 	}
 
-	created, err := h.service.Create(r.Context(), h.devUserID, input)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	scope := idempotency_key.Scope{
+		UserID:    h.devUserID,
+		Operation: createTransactionOperation,
+		Key:       key,
+	}
+
+	result, err := h.idempotencyKey.Do(
+		ctx,
+		scope,
+		transactionFingerprint(input),
+		func(ctx context.Context) (idempotency_key.Result, error) {
+			created, err := h.service.Create(ctx, h.devUserID, input)
+			if err != nil {
+				return idempotency_key.Result{}, err
+			}
+
+			return renderTransaction(http.StatusCreated, created)
+		},
+	)
 	if err != nil {
 		writeTransactionError(w, "create transaction", err)
 		return
 	}
 
-	writeTransaction(w, http.StatusCreated, created)
+	writeResult(w, result)
 }
 
 func (h *transactionHandler) getByID(
@@ -302,6 +384,22 @@ func writeTransactionError(
 			"Account is archived",
 		)
 
+	case errors.Is(err, idempotency_key.ErrKeyReused):
+		writeError(
+			w,
+			http.StatusConflict,
+			"idempotency_key_reused",
+			"Idempotency-Key was already used with a different request",
+		)
+
+	case errors.Is(err, idempotency_key.ErrInProgress):
+		writeError(
+			w,
+			http.StatusConflict,
+			"idempotency_in_progress",
+			"A request with this Idempotency-Key is still in progress; retry with the same key",
+		)
+
 	default:
 		log.Printf("%s failed: %v", operation, err)
 
@@ -314,12 +412,10 @@ func writeTransactionError(
 	}
 }
 
-func writeTransaction(
-	w http.ResponseWriter,
-	status int,
+func newTransactionResponse(
 	value transaction.Transaction,
-) {
-	response := transactionResponse{
+) transactionResponse {
+	return transactionResponse{
 		ID:                   value.ID.String(),
 		Type:                 string(value.Type),
 		AccountID:            value.AccountID.String(),
@@ -331,15 +427,61 @@ func writeTransaction(
 		CreatedAt:            value.CreatedAt.UTC(),
 		UpdatedAt:            value.UpdatedAt.UTC(),
 	}
+}
 
-	etag := fmt.Sprintf(
+func transactionETag(value transaction.Transaction) string {
+	return fmt.Sprintf(
 		`"transaction-v1-%s-%d"`,
 		value.ID.String(),
 		value.Version,
 	)
-	w.Header().Set("ETag", etag)
+}
 
-	writeJSON(w, status, response)
+func writeTransaction(
+	w http.ResponseWriter,
+	status int,
+	value transaction.Transaction,
+) {
+	w.Header().Set("ETag", transactionETag(value))
+
+	writeJSON(w, status, newTransactionResponse(value))
+}
+
+func renderTransaction(
+	status int,
+	value transaction.Transaction,
+) (idempotency_key.Result, error) {
+	body, err := json.Marshal(newTransactionResponse(value))
+	if err != nil {
+		return idempotency_key.Result{}, fmt.Errorf(
+			"encode transaction: %w",
+			err,
+		)
+	}
+
+	return idempotency_key.Result{
+		ResourceID: value.ID,
+		Status:     status,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"ETag":         transactionETag(value),
+		},
+		Body: body,
+	}, nil
+}
+
+func writeResult(w http.ResponseWriter, result idempotency_key.Result) {
+	for name, value := range result.Headers {
+		w.Header().Set(name, value)
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(result.Status)
+
+	if _, err := w.Write(result.Body); err != nil {
+		log.Printf("write response: %v", err)
+	}
 }
 
 func optionalUUIDString(value *uuid.UUID) *string {

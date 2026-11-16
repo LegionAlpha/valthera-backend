@@ -12,6 +12,7 @@ import (
 	"github.com/LegionAlpha/valthera-backend/internal/account"
 	"github.com/LegionAlpha/valthera-backend/internal/config"
 	"github.com/LegionAlpha/valthera-backend/internal/httpapi"
+	"github.com/LegionAlpha/valthera-backend/internal/idempotency_key"
 	"github.com/LegionAlpha/valthera-backend/internal/identity"
 	"github.com/LegionAlpha/valthera-backend/internal/password"
 	"github.com/LegionAlpha/valthera-backend/internal/postgres"
@@ -111,17 +112,21 @@ func run() error {
 
 	cancel()
 
+	txRunnerRepository := postgres.NewTxRunnerRepository(pool)
+	idempotencyKeyRepository := postgres.NewIdempotencyKeyRepository(pool)
+	idempotencyService := idempotency_key.NewService(idempotencyKeyRepository, txRunnerRepository)
+
 	accountRepository := postgres.NewAccountRepository(pool)
 	accountService := account.NewService(
 		accountRepository,
 		accountRepository,
 	)
 
-	transactionRepository := postgres.NewTransactionRepository(pool)
-	transactionService := transaction.NewService(
-		transactionRepository,
-		transactionRepository,
+	transactionRepository := postgres.NewTransactionRepository(
+		pool,
+		txRunnerRepository,
 	)
+	transactionService := transaction.NewService(transactionRepository)
 
 	passwordHasher, err := password.NewArgon2idHasher(2)
 	if err != nil {
@@ -138,6 +143,7 @@ func run() error {
 		accountService,
 		transactionService,
 		identityService,
+		idempotencyService,
 		devUserID,
 		"http://"+cfg.HTTPAddr,
 		cfg.RegistrationEnabled,
